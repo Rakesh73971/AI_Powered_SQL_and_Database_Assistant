@@ -1,0 +1,13 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.git/
+.gitignore
+.env
+chroma_db/
+test_employees.db
+Dockerfile
+docker-compose.yml
