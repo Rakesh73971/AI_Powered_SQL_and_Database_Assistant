@@ -33,4 +33,7 @@ htmlcov/
 
 # OS metadata
 .DS_Store
-Thumbs.db
+Thumbs.db
+
+# ChromaDB database
+app/chroma_db/
