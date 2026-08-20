@@ -24,18 +24,18 @@ class QueryHistory(Base):
     id                  = Column(Integer, primary_key=True)
     user_id             = Column(Integer, ForeignKey("users.id"), nullable=False)
     connection_id       = Column(Integer, ForeignKey("database_connections.id"), nullable=False)
-    nl_query            = Column(Text, nullable=False)        # natural language input
-    generated_sql       = Column(Text, nullable=True)         # NULL if blocked before generation
-    execution_time_ms   = Column(Integer, nullable=True)      # NULL if failed/blocked
-    row_count           = Column(Integer, nullable=True)       # NULL if failed/blocked
-    result_preview      = Column(JSON, nullable=True)         # first 5 rows
-    ai_explanation      = Column(Text, nullable=True)         # plain-English result summary
-    schema_context_used = Column(JSON, nullable=True)         # RAG-retrieved table definitions
+    nl_query            = Column(Text, nullable=False)        
+    generated_sql       = Column(Text, nullable=True)         
+    execution_time_ms   = Column(Integer, nullable=True)      
+    row_count           = Column(Integer, nullable=True)       
+    result_preview      = Column(JSON, nullable=True)         
+    ai_explanation      = Column(Text, nullable=True)         
+    schema_context_used = Column(JSON, nullable=True)         
     status              = Column(
                             SAEnum(QueryStatus, values_callable=lambda x: [e.value for e in x]),
                             nullable=False
                           )
-    error_message       = Column(Text, nullable=True)         # DB error if status=failed
+    error_message       = Column(Text, nullable=True)         
     feedback            = Column(
                             SAEnum(Feedback, values_callable=lambda x: [e.value for e in x]),
                             default=Feedback.NONE, nullable=False
