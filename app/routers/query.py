@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, status
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.database import get_db
 from app.schemas.query_history import QueryRequest, QueryHistoryOut, FeedbackUpdate
 from app.models.user import User
@@ -10,13 +10,13 @@ router = APIRouter(prefix="/queries", tags=["Queries"])
 
 
 @router.post("/{connection_id}/execute", response_model=QueryHistoryOut)
-def run_query(
+async def run_query(
     connection_id: int,
     request: QueryRequest,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
-    return query_service.execute_nl_query(
+    return await query_service.execute_nl_query(
         db,
         connection_id,
         request.nl_query,
@@ -25,22 +25,22 @@ def run_query(
 
 
 @router.get("/{connection_id}/history", response_model=list[QueryHistoryOut])
-def get_history(
+async def get_history(
     connection_id: int,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
-    return query_service.get_query_history_by_connection(db, connection_id, current_user.id)
+    return await query_service.get_query_history_by_connection(db, connection_id, current_user.id)
 
 
 @router.patch("/{query_id}/feedback", response_model=QueryHistoryOut)
-def give_feedback(
+async def give_feedback(
     query_id: int,
     feedback_data: FeedbackUpdate,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
-    return query_service.submit_query_feedback(
+    return await query_service.submit_query_feedback(
         db,
         query_id,
         feedback_data.feedback,
