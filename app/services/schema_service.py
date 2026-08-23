@@ -1,6 +1,8 @@
 from datetime import datetime
-from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.orm import Session
+import asyncio
+from sqlalchemy import create_engine, inspect, text, select, delete
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from fastapi import HTTPException, status
 from app.models.database_connection import DatabaseConnection
 from app.models.schema_cache import SchemaCache
@@ -16,34 +18,15 @@ def serialize_value(val):
     return str(val)
 
 
-def sync_connection_schema(db: Session, connection_id: int, user_id: int) -> dict:
-    connection = get_connection_or_404(db, connection_id, user_id)
+def _inspect_database(sqlalchemy_url: str) -> list[dict]:
+    """
+    Synchronous helper executed in a thread pool to perform dynamic DB connection inspection.
+    """
+    temp_engine = create_engine(sqlalchemy_url)
+    inspector = inspect(temp_engine)
+    table_names = inspector.get_table_names()
     
-    # Try connecting to the user's database
-    try:
-        temp_engine = create_engine(connection.sqlalchemy_url)
-        inspector = inspect(temp_engine)
-        table_names = inspector.get_table_names()
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to connect to the database: {exc}"
-        )
-
-    # Clear the session's collection to avoid SQLAlchemy attempting to update FKs to NULL
-    connection.schema.clear()
-    db.query(SchemaCache).filter(SchemaCache.connection_id == connection_id).delete()
-    db.flush()
-    
-    # Clear ChromaDB documents for this connection
-    try:
-        from app.ai.rag import delete_connection_schemas, index_table_schema
-        delete_connection_schemas(connection_id)
-        rag_enabled = True
-    except Exception:
-        rag_enabled = False
-    
-    tables_synced = 0
+    results = []
     
     for table_name in table_names:
         # Get column definitions
@@ -81,10 +64,67 @@ def sync_connection_schema(db: Session, connection_id: int, user_id: int) -> dic
             # Swallow errors for individual tables (e.g. permission issues or system tables)
             pass
 
+        results.append({
+            "table_name": table_name,
+            "column_definitions": column_definitions,
+            "sample_values": sample_values,
+            "row_count": row_count
+        })
+        
+    return results
+
+
+async def sync_connection_schema(db: AsyncSession, connection_id: int, user_id: int) -> dict:
+    # Fetch connection loading connection schemas to avoid lazy loading issues in async context
+    stmt = (
+        select(DatabaseConnection)
+        .filter(DatabaseConnection.id == connection_id, DatabaseConnection.user_id == user_id)
+        .options(selectinload(DatabaseConnection.schema))
+    )
+    res = await db.execute(stmt)
+    connection = res.scalars().first()
+    if not connection:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Database connection not found or unauthorized"
+        )
+    
+    # Try connecting and inspecting the user's database in a separate thread
+    try:
+        table_data = await asyncio.to_thread(_inspect_database, connection.sqlalchemy_url)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to connect to the database: {exc}"
+        )
+
+    # Clear the session's collection to avoid SQLAlchemy attempting to update FKs to NULL
+    connection.schema.clear()
+    await db.execute(delete(SchemaCache).where(SchemaCache.connection_id == connection_id))
+    await db.flush()
+    
+    # Clear ChromaDB documents for this connection
+    try:
+        from app.ai.rag import delete_connection_schemas, index_table_schema
+        await asyncio.to_thread(delete_connection_schemas, connection_id)
+        rag_enabled = True
+    except Exception:
+        rag_enabled = False
+    
+    tables_synced = 0
+    
+    for item in table_data:
+        table_name = item["table_name"]
+        column_definitions = item["column_definitions"]
+        sample_values = item["sample_values"]
+        row_count = item["row_count"]
+
         chroma_doc_id = None
         if rag_enabled:
             try:
-                chroma_doc_id = index_table_schema(connection_id, table_name, column_definitions, sample_values)
+                chroma_doc_id = await asyncio.to_thread(
+                    index_table_schema, connection_id, table_name, column_definitions, sample_values
+                )
             except Exception:
                 pass
 
@@ -103,8 +143,8 @@ def sync_connection_schema(db: Session, connection_id: int, user_id: int) -> dic
     # Update connection status
     connection.is_schema_indexed = True
     connection.last_synced_at = datetime.utcnow()
-    db.commit()
-    db.refresh(connection)
+    await db.commit()
+    await db.refresh(connection)
 
     return {
         "tables_synced": tables_synced,
@@ -113,7 +153,10 @@ def sync_connection_schema(db: Session, connection_id: int, user_id: int) -> dic
     }
 
 
-def get_cached_schema(db: Session, connection_id: int, user_id: int) -> list[SchemaCache]:
+async def get_cached_schema(db: AsyncSession, connection_id: int, user_id: int) -> list[SchemaCache]:
     # Ensure ownership first
-    get_connection_or_404(db, connection_id, user_id)
-    return db.query(SchemaCache).filter(SchemaCache.connection_id == connection_id).all()
+    await get_connection_or_404(db, connection_id, user_id)
+    res = await db.execute(
+        select(SchemaCache).filter(SchemaCache.connection_id == connection_id)
+    )
+    return list(res.scalars().all())

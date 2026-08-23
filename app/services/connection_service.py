@@ -1,15 +1,20 @@
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from fastapi import HTTPException, status
+import asyncio
 from app.models.database_connection import DatabaseConnection
 from app.schemas.database_connection import ConnectionCreate
 
 
-def register_connection(db: Session, conn_data: ConnectionCreate, user_id: int) -> DatabaseConnection:
+async def register_connection(db: AsyncSession, conn_data: ConnectionCreate, user_id: int) -> DatabaseConnection:
     # Check if a connection with the same name already exists for this user
-    existing = db.query(DatabaseConnection).filter(
-        DatabaseConnection.user_id == user_id,
-        DatabaseConnection.name == conn_data.name
-    ).first()
+    result = await db.execute(
+        select(DatabaseConnection).filter(
+            DatabaseConnection.user_id == user_id,
+            DatabaseConnection.name == conn_data.name
+        )
+    )
+    existing = result.scalars().first()
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -24,20 +29,26 @@ def register_connection(db: Session, conn_data: ConnectionCreate, user_id: int) 
         db_name=conn_data.db_name
     )
     db.add(db_conn)
-    db.commit()
-    db.refresh(db_conn)
+    await db.commit()
+    await db.refresh(db_conn)
     return db_conn
 
 
-def get_connections_by_user(db: Session, user_id: int) -> list[DatabaseConnection]:
-    return db.query(DatabaseConnection).filter(DatabaseConnection.user_id == user_id).all()
+async def get_connections_by_user(db: AsyncSession, user_id: int) -> list[DatabaseConnection]:
+    result = await db.execute(
+        select(DatabaseConnection).filter(DatabaseConnection.user_id == user_id)
+    )
+    return list(result.scalars().all())
 
 
-def get_connection_or_404(db: Session, connection_id: int, user_id: int) -> DatabaseConnection:
-    conn = db.query(DatabaseConnection).filter(
-        DatabaseConnection.id == connection_id,
-        DatabaseConnection.user_id == user_id
-    ).first()
+async def get_connection_or_404(db: AsyncSession, connection_id: int, user_id: int) -> DatabaseConnection:
+    result = await db.execute(
+        select(DatabaseConnection).filter(
+            DatabaseConnection.id == connection_id,
+            DatabaseConnection.user_id == user_id
+        )
+    )
+    conn = result.scalars().first()
     if not conn:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -46,12 +57,12 @@ def get_connection_or_404(db: Session, connection_id: int, user_id: int) -> Data
     return conn
 
 
-def delete_connection(db: Session, connection_id: int, user_id: int) -> None:
-    conn = get_connection_or_404(db, connection_id, user_id)
+async def delete_connection(db: AsyncSession, connection_id: int, user_id: int) -> None:
+    conn = await get_connection_or_404(db, connection_id, user_id)
     try:
         from app.ai.rag import delete_connection_schemas
-        delete_connection_schemas(connection_id)
+        await asyncio.to_thread(delete_connection_schemas, connection_id)
     except Exception:
         pass
-    db.delete(conn)
-    db.commit()
+    await db.delete(conn)
+    await db.commit()
