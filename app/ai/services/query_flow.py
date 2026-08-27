@@ -1,7 +1,8 @@
 import time
 import re
+import asyncio
 from sqlalchemy import create_engine, text
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException, status
 from app.models.query_history import QueryHistory, QueryStatus, Feedback
 from app.models.database_connection import DatabaseConnection
@@ -38,8 +39,17 @@ def is_sql_safe(sql: str) -> bool:
         
     return True
 
-def run_ai_query_flow(
-    db: Session,
+def _execute_dynamic_sql(connection_url: str, generated_sql: str) -> tuple[list, list]:
+    temp_engine = create_engine(connection_url)
+    with temp_engine.connect() as temp_conn:
+        res = temp_conn.execute(text(generated_sql))
+        # Fetch up to 100 rows for counting and previewing
+        rows = res.fetchmany(100)
+        columns = list(res.keys()) if res.keys() else []
+        return rows, columns
+
+async def run_ai_query_flow(
+    db: AsyncSession,
     connection_id: int,
     nl_query: str,
     user_id: int
@@ -54,21 +64,21 @@ def run_ai_query_flow(
     6. Persists the historical record in the PostgreSQL metadata db.
     """
     # 1. Fetch connection
-    connection = get_connection_or_404(db, connection_id, user_id)
+    connection = await get_connection_or_404(db, connection_id, user_id)
     
     # 2. Retrieve schemas using RAG
-    relevant_schemas = retrieve_relevant_schemas(connection_id, nl_query, limit=3)
+    relevant_schemas = await asyncio.to_thread(retrieve_relevant_schemas, connection_id, nl_query, limit=3)
     schema_context = "\n\n".join(relevant_schemas) if relevant_schemas else "No schemas indexed. Please index your database."
     
     # 3. Generate SQL using the SQL generation chain
     try:
-        generated_sql = run_sql_chain(
+        generated_sql = await run_sql_chain(
             dialect=connection.db_type.value,
             schema_context=schema_context,
             question=nl_query
         )
     except Exception as exc:
-        return create_query_history(
+        return await create_query_history(
             db=db,
             connection_id=connection_id,
             nl_query=nl_query,
@@ -80,7 +90,7 @@ def run_ai_query_flow(
         
     # 4. Safety validation
     if not is_sql_safe(generated_sql):
-        return create_query_history(
+        return await create_query_history(
             db=db,
             connection_id=connection_id,
             nl_query=nl_query,
@@ -98,21 +108,15 @@ def run_ai_query_flow(
     error_message = None
     
     try:
-        temp_engine = create_engine(connection.sqlalchemy_url)
-        with temp_engine.connect() as temp_conn:
-            res = temp_conn.execute(text(generated_sql))
-            # Fetch up to 100 rows for counting and previewing
-            rows = res.fetchmany(100)
-            row_count = len(rows)
-            
-            # Format rows as serialized dicts
-            if res.keys():
-                columns = list(res.keys())
-                for row in rows[:5]:
-                    row_dict = {}
-                    for col, val in zip(columns, row):
-                        row_dict[col] = serialize_value(val)
-                    result_preview.append(row_dict)
+        rows, columns = await asyncio.to_thread(_execute_dynamic_sql, connection.sqlalchemy_url, generated_sql)
+        row_count = len(rows)
+        
+        # Format rows as serialized dicts
+        for row in rows[:5]:
+            row_dict = {}
+            for col, val in zip(columns, row):
+                row_dict[col] = serialize_value(val)
+            result_preview.append(row_dict)
     except Exception as exc:
         status_val = QueryStatus.FAILED
         error_message = str(exc)
@@ -124,7 +128,7 @@ def run_ai_query_flow(
     if status_val == QueryStatus.SUCCESS:
         try:
             preview_str = str(result_preview)
-            ai_explanation = run_explain_chain(
+            ai_explanation = await run_explain_chain(
                 question=nl_query,
                 sql=generated_sql,
                 results=preview_str
@@ -148,6 +152,6 @@ def run_ai_query_flow(
         feedback=Feedback.NONE
     )
     db.add(db_history)
-    db.commit()
-    db.refresh(db_history)
+    await db.commit()
+    await db.refresh(db_history)
     return db_history
