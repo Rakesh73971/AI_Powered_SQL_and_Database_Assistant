@@ -5,8 +5,6 @@ from app.routers import auth, user, database_connection, query, admin
 # Ensure models are loaded so SQL Alchemy registers metadata
 from app import models
 
-Base.metadata.create_all(bind=engine)
-
 app = FastAPI(
     title="AI-Powered SQL Generator & Executor API",
     description="Translate Natural Language to SQL and execute against databases securely using LLMs.",
@@ -22,8 +20,9 @@ app.include_router(admin.router)
 
 
 @app.on_event("startup")
-def startup_db_init():
-    Base.metadata.create_all(bind=engine)
+async def startup_db_init():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
 
 @app.get("/")
