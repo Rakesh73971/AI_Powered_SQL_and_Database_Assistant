@@ -3,7 +3,7 @@ from app.ai.llm import get_llm
 from app.ai.prompts.sql_prompt import SQL_HUMAN_PROMPT, SQL_SYSTEM_PROMPT
 
 
-def run_sql_chain(dialect: str, schema_context: str, question: str) -> str:
+async def run_sql_chain(dialect: str, schema_context: str, question: str) -> str:
     prompt = ChatPromptTemplate.from_messages([
         ("system", SQL_SYSTEM_PROMPT),
         ("human", SQL_HUMAN_PROMPT)
@@ -11,7 +11,7 @@ def run_sql_chain(dialect: str, schema_context: str, question: str) -> str:
 
     chain = prompt | get_llm()
 
-    response = chain.invoke({
+    response = await chain.ainvoke({
         "dialect": dialect,
         "schema_context": schema_context,
         "question": question

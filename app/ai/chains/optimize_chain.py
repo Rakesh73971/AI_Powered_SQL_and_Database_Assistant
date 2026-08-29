@@ -3,7 +3,7 @@ from app.ai.llm import get_llm
 from app.ai.prompts.optimize_prompt import OPTIMIZE_HUMAN_PROMPT, OPTIMIZE_SYSTEM_PROMPT
 
 
-def run_optimize_chain(
+async def run_optimize_chain(
     dialect: str,
     schema_context: str,
     nl_query: str,
@@ -18,7 +18,7 @@ def run_optimize_chain(
 
     chain = prompt | get_llm()
 
-    response = chain.invoke({
+    response = await chain.ainvoke({
         "dialect": dialect,
         "schema_context": schema_context,
         "nl_query": nl_query,

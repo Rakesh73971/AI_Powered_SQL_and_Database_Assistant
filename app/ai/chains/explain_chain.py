@@ -3,7 +3,7 @@ from app.ai.llm import get_llm
 from app.ai.prompts.explain_prompt import EXPLAIN_HUMAN_PROMPT, EXPLAIN_SYSTEM_PROMPT
 
 
-def run_explain_chain(question: str, sql: str, results: str) -> str:
+async def run_explain_chain(question: str, sql: str, results: str) -> str:
     prompt = ChatPromptTemplate.from_messages([
         ("system", EXPLAIN_SYSTEM_PROMPT),
         ("human", EXPLAIN_HUMAN_PROMPT)
@@ -11,7 +11,7 @@ def run_explain_chain(question: str, sql: str, results: str) -> str:
 
     chain = prompt | get_llm()
 
-    response = chain.invoke({
+    response = await chain.ainvoke({
         "question": question,
         "sql": sql,
         "results": results
