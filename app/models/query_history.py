@@ -9,7 +9,7 @@ from app.db.database import Base
 class QueryStatus(PyEnum):
     SUCCESS = "success"
     FAILED  = "failed"
-    BLOCKED = "blocked"  # unsafe query detected
+    BLOCKED = "blocked"  
 
 class Feedback(PyEnum):
     POSITIVE = "positive"
